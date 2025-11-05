@@ -1,32 +1,34 @@
+"""
+FLEXIBLE HOTEL COMPARISON APP
+==============================
+
+QUICK START:
+1. Install: pip install flask requests pandas
+2. Run: python app.py
+3. Open: http://localhost:5000
+
+Your SerpAPI Key is already configured!
+"""
+
 import os
 import time
 import re
 import unicodedata
 from datetime import datetime
 from functools import lru_cache
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, jsonify
 import requests
 import pandas as pd
 
 app = Flask(__name__)
 
-# API Keys from environment variables
-SERPAPI_KEY = os.environ.get('SERPAPI_KEY', '')
+# ✅ YOUR API KEY (already configured)
+SERPAPI_KEY = "371284cfbed0fcf087c826f04e982c76a27488a37b018f795d59f3ade87a6d20"
 
 SERPAPI_URL = "https://serpapi.com/search"
 
-# Fixed hotels
-HOTELS = [
-    "Hilton Garden Inn Balikesir",
-    "Ramada Residences by Wyndham Balikesir",
-    "Balıkesir Altın Otel Spa",
-    "Willmont Hotel",
-]
-LOCATION = "Balikesir, Turkey"
-
 @lru_cache(maxsize=16)
 def get_try_usd_rate():
-    """Fetch TRY to USD exchange rate"""
     try:
         url = "https://api.exchangerate-api.com/v4/latest/TRY"
         r = requests.get(url, timeout=10)
@@ -37,7 +39,6 @@ def get_try_usd_rate():
         return 0.029
 
 def normalize_txt(s: str) -> str:
-    """Normalize text for fuzzy matching"""
     if not s:
         return ""
     s = unicodedata.normalize("NFKD", s)
@@ -46,7 +47,6 @@ def normalize_txt(s: str) -> str:
     return re.sub(r"\s+", " ", s)
 
 def name_match_score(candidate: str, target: str) -> int:
-    """Score how well candidate matches target hotel name"""
     c = normalize_txt(candidate)
     t = normalize_txt(target)
     score = 0
@@ -56,7 +56,6 @@ def name_match_score(candidate: str, target: str) -> int:
     return score
 
 def extract_try_price(value):
-    """Extract numeric price from various formats"""
     if value is None:
         return None
     s = str(value)
@@ -67,16 +66,17 @@ def extract_try_price(value):
     except Exception:
         return None
 
-def compare_hotels(hotels, check_in, check_out, location=LOCATION):
+def compare_hotels(hotels, check_in, check_out, location):
     """Compare hotel prices using SerpAPI"""
     results = []
 
     for hotel_name in hotels:
-        price_try = None
-        hotel_title = hotel_name
-        source = None
+        if not hotel_name or not hotel_name.strip():
+            continue
 
-        # SerpAPI Google Hotels
+        price_try = None
+        hotel_title = hotel_name.strip()
+
         serpapi_params = {
             "engine": "google_hotels",
             "q": f"{hotel_name} {location}",
@@ -117,7 +117,6 @@ def compare_hotels(hotels, check_in, check_out, location=LOCATION):
                     for cand in candidates:
                         price_try = extract_try_price(cand)
                         if price_try:
-                            source = "SerpAPI"
                             break
         except Exception as e:
             print(f"Error fetching {hotel_name}: {e}")
@@ -153,19 +152,37 @@ def index():
     best = None
     check_in = None
     check_out = None
+    location = None
+    hotels = ['', '', '', '']
     error = None
 
     if request.method == 'POST':
         check_in = request.form.get('check_in')
         check_out = request.form.get('check_out')
+        location = request.form.get('location', '').strip()
 
-        if not SERPAPI_KEY:
-            error = "⚠️ SERPAPI_KEY not set. Please configure environment variables."
-        elif not check_in or not check_out:
+        # Get up to 4 hotels
+        hotels = [
+            request.form.get('hotel1', '').strip(),
+            request.form.get('hotel2', '').strip(),
+            request.form.get('hotel3', '').strip(),
+            request.form.get('hotel4', '').strip(),
+        ]
+
+        # Filter out empty hotels
+        hotels_to_search = [h for h in hotels if h]
+
+        if not check_in or not check_out:
             error = "⚠️ Please provide both check-in and check-out dates."
+        elif not location:
+            error = "⚠️ Please provide a location."
+        elif not hotels_to_search:
+            error = "⚠️ Please enter at least one hotel name."
+        elif len(hotels_to_search) > 4:
+            error = "⚠️ Maximum 4 hotels allowed."
         else:
             try:
-                results = compare_hotels(HOTELS, check_in, check_out)
+                results = compare_hotels(hotels_to_search, check_in, check_out, location)
                 pd.DataFrame(results).to_csv('latest_results.csv', index=False, encoding='utf-8')
                 avail = [r for r in results if r['Price per Night (₺)'] != 'N/A']
                 if avail:
@@ -182,17 +199,35 @@ def index():
         best=best,
         check_in=check_in,
         check_out=check_out,
+        location=location,
+        hotels=hotels,
         error=error
     )
 
 @app.route('/download')
 def download():
-    """Download latest results as CSV"""
     try:
         return send_file('latest_results.csv', as_attachment=True, download_name='hotel_comparison.csv')
     except Exception:
         return "No results available yet. Run a comparison first.", 404
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    import socket
+    hostname = socket.gethostname()
+    try:
+        local_ip = socket.gethostbyname(hostname)
+    except:
+        local_ip = "YOUR_IP"
+
+    print("\n" + "="*60)
+    print("🏨 FLEXIBLE HOTEL COMPARISON APP")
+    print("="*60)
+    print(f"✅ Server starting...")
+    print(f"\n📱 ACCESS FROM THIS COMPUTER:")
+    print(f"   http://localhost:5000")
+    print(f"\n📱 ACCESS FROM YOUR PHONE (same WiFi):")
+    print(f"   http://{local_ip}:5000")
+    print(f"\n⚠️  Make sure your phone and computer are on the same WiFi!")
+    print("="*60 + "\n")
+
+    app.run(host='0.0.0.0', port=5000, debug=True)
