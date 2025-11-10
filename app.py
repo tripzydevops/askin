@@ -121,6 +121,37 @@ def compare_hotels(hotels, check_in, check_out, location):
         except Exception as e:
             print(f"Error fetching {hotel_name}: {e}")
 
+        if price_try is None:
+            try:
+                print(f"No price for '{hotel_title}' in Hotels API, trying Web Search...")
+                web_search_params = serpapi_params.copy()
+                web_search_params.update({
+                    "engine": "google",
+                    "q": f"{hotel_name} {location} price per night",
+                })
+                del web_search_params["check_in_date"]
+                del web_search_params["check_out_date"]
+                del web_search_params["adults"]
+
+                resp = requests.get(SERPAPI_URL, params=web_search_params, timeout=25)
+                if resp.status_code == 200:
+                    data = resp.json()
+
+                    # Source 1: Answer box
+                    if 'answer_box' in data and data['answer_box'].get('answer'):
+                        price_try = extract_try_price(data['answer_box']['answer'])
+
+                    # Source 2: Organic results
+                    if price_try is None:
+                        for result in data.get('organic_results', []):
+                            snippet = result.get('snippet')
+                            if snippet:
+                                price_try = extract_try_price(snippet)
+                                if price_try:
+                                    break
+            except Exception as e:
+                print(f"Error during web search for {hotel_name}: {e}")
+
         if price_try is not None:
             try:
                 fx = get_try_usd_rate()
