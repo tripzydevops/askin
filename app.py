@@ -3,40 +3,47 @@ FLEXIBLE HOTEL COMPARISON APP
 ==============================
 
 QUICK START:
-1. Install: pip install flask requests pandas
-2. Run: python app.py
-3. Open: http://localhost:5000
-
-Your SerpAPI Key is already configured!
+1. Install: pip install -r requirements.txt
+2. Create .env file with SERPAPI_KEY
+3. Run: python app.py
+4. Open: http://localhost:5000
 """
 
 import os
-import time
 import re
+import asyncio
+import logging
 import unicodedata
-from datetime import datetime
 from functools import lru_cache
-from flask import Flask, render_template, request, send_file, jsonify
-import requests
+from flask import Flask, render_template, request, send_file
+import aiohttp
 import pandas as pd
+from dotenv import load_dotenv
 
+load_dotenv()
 app = Flask(__name__)
 
-# ✅ YOUR API KEY (already configured)
-SERPAPI_KEY = "371284cfbed0fcf087c826f04e982c76a27488a37b018f795d59f3ade87a6d20"
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
+if not SERPAPI_KEY:
+    logging.critical("FATAL: SERPAPI_KEY environment variable not set.")
+    raise ValueError("SERPAPI_KEY environment variable not set.")
 
 SERPAPI_URL = "https://serpapi.com/search"
 
 @lru_cache(maxsize=16)
 def get_try_usd_rate():
     try:
+        import requests
         url = "https://api.exchangerate-api.com/v4/latest/TRY"
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
         return float(data["rates"]["USD"])
-    except Exception:
-        return 0.029
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Could not fetch currency conversion rate: {e}")
+        return 0.029 # Fallback rate
 
 def normalize_txt(s: str) -> str:
     if not s:
@@ -63,38 +70,36 @@ def extract_try_price(value):
     m = re.search(r"(\d+(?:\.\d+)?)", s)
     try:
         return float(m.group(1)) if m else None
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
-def compare_hotels(hotels, check_in, check_out, location):
-    """Compare hotel prices using SerpAPI"""
-    results = []
+async def fetch_hotel_data(session, hotel_name, check_in, check_out, location):
+    price_try = None
+    hotel_title = hotel_name.strip()
+    status = '✗ Error'
 
-    for hotel_name in hotels:
-        if not hotel_name or not hotel_name.strip():
-            continue
+    serpapi_params = {
+        "engine": "google_hotels",
+        "q": f"{hotel_name} in {location}",
+        "check_in_date": check_in,
+        "check_out_date": check_out,
+        "adults": "2",
+        "currency": "TRY",
+        "gl": "tr",
+        "hl": "en",
+        "api_key": SERPAPI_KEY,
+    }
 
-        price_try = None
-        hotel_title = hotel_name.strip()
+    try:
+        async with session.get(SERPAPI_URL, params=serpapi_params, timeout=30) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
 
-        serpapi_params = {
-            "engine": "google_hotels",
-            "q": f"{hotel_name} in {location}",
-            "check_in_date": check_in,
-            "check_out_date": check_out,
-            "adults": "2",
-            "currency": "TRY",
-            "gl": "tr",
-            "hl": "en",
-            "api_key": SERPAPI_KEY,
-        }
-
-        try:
-            resp = requests.get(SERPAPI_URL, params=serpapi_params, timeout=25)
-            if resp.status_code == 200:
-                data = resp.json()
+            if data.get("error"):
+                logging.error(f"SerpAPI error for '{hotel_name}': {data['error']}")
+                status = '✗ API Error'
+            else:
                 props = data.get('properties') or []
-
                 if props:
                     best = sorted(
                         props,
@@ -104,130 +109,108 @@ def compare_hotels(hotels, check_in, check_out, location):
                     hotel_title = best.get('name') or hotel_title
 
                     candidates = [
-                        best.get('total_rate', {}).get('lowest') if isinstance(best.get('total_rate'), dict) else None,
-                        best.get('rate_per_night', {}).get('lowest') if isinstance(best.get('rate_per_night'), dict) else None,
+                        best.get('total_rate', {}).get('lowest'),
+                        best.get('rate_per_night', {}).get('lowest'),
                         best.get('price'),
                         best.get('hotel_price'),
                     ]
-
-                    for off in (best.get('offers') or []):
-                        candidates.append(off.get('price'))
-                        candidates.append(off.get('rate'))
+                    candidates.extend(off.get('price') for off in best.get('offers', []))
 
                     for cand in candidates:
                         price_try = extract_try_price(cand)
                         if price_try:
+                            status = '✓ Available'
                             break
-        except Exception as e:
-            print(f"Error fetching {hotel_name}: {e}")
+                    else:
+                        status = '✗ No price'
+                else:
+                    status = '✗ Not found'
 
-        if price_try is not None:
-            try:
-                fx = get_try_usd_rate()
-                price_usd = price_try * fx
-            except Exception:
-                price_usd = None
+    except aiohttp.ClientError as e:
+        logging.error(f"Network error fetching '{hotel_name}': {e}")
+        status = '✗ Network Error'
+    except asyncio.TimeoutError:
+        logging.error(f"Timeout fetching '{hotel_name}'")
+        status = '✗ Timeout'
+    except Exception as e:
+        logging.error(f"Unexpected error fetching '{hotel_name}': {e}", exc_info=True)
 
-            results.append({
-                'Hotel': hotel_title,
-                'Price per Night (₺)': f"₺{price_try:.2f}",
-                'Price per Night ($)': f"${price_usd:.2f}" if price_usd is not None else 'N/A',
-                'Status': '✓ Available'
-            })
-        else:
-            results.append({
-                'Hotel': hotel_title,
-                'Price per Night (₺)': 'N/A',
-                'Price per Night ($)': 'N/A',
-                'Status': '✗ No price'
-            })
+    result = {
+        'Hotel': hotel_title,
+        'Price per Night (₺)': 'N/A',
+        'Price per Night ($)': 'N/A',
+        'Status': status
+    }
 
-        time.sleep(1.5)
+    if price_try is not None:
+        fx = get_try_usd_rate()
+        price_usd = price_try * fx if fx else None
+        result.update({
+            'Price per Night (₺)': f"₺{price_try:.2f}",
+            'Price per Night ($)': f"${price_usd:.2f}" if price_usd else 'N/A',
+        })
 
-    return results
+    return result
+
+async def compare_hotels_async(hotels, check_in, check_out, location):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_hotel_data(session, name, check_in, check_out, location) for name in hotels if name and name.strip()]
+        return await asyncio.gather(*tasks)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    results = None
-    best = None
-    check_in = None
-    check_out = None
-    location = None
+    results, best, check_in, check_out, location, error = None, None, None, None, None, None
     hotels = ['', '', '', '']
-    error = None
 
     if request.method == 'POST':
         check_in = request.form.get('check_in')
         check_out = request.form.get('check_out')
         location = request.form.get('location', '').strip()
-
-        # Get up to 4 hotels
-        hotels = [
-            request.form.get('hotel1', '').strip(),
-            request.form.get('hotel2', '').strip(),
-            request.form.get('hotel3', '').strip(),
-            request.form.get('hotel4', '').strip(),
-        ]
-
-        # Filter out empty hotels
+        hotels = [request.form.get(f'hotel{i}', '').strip() for i in range(1, 5)]
         hotels_to_search = [h for h in hotels if h]
 
-        if not check_in or not check_out:
+        if not all([check_in, check_out]):
             error = "⚠️ Please provide both check-in and check-out dates."
         elif not location:
             error = "⚠️ Please provide a location."
         elif not hotels_to_search:
             error = "⚠️ Please enter at least one hotel name."
-        elif len(hotels_to_search) > 4:
-            error = "⚠️ Maximum 4 hotels allowed."
         else:
             try:
-                results = compare_hotels(hotels_to_search, check_in, check_out, location)
-                pd.DataFrame(results).to_csv('latest_results.csv', index=False, encoding='utf-8')
-                avail = [r for r in results if r['Price per Night (₺)'] != 'N/A']
-                if avail:
-                    best = min(
-                        avail,
-                        key=lambda x: float(x['Price per Night (₺)'].replace('₺', '').replace(',', ''))
-                    )
+                results = asyncio.run(compare_hotels_async(hotels_to_search, check_in, check_out, location))
+                if results:
+                    pd.DataFrame(results).to_csv('latest_results.csv', index=False, encoding='utf-8')
+                    avail = [r for r in results if r['Status'] == '✓ Available']
+                    if avail:
+                        best = min(avail, key=lambda x: float(re.sub(r'[^\d.]', '', x['Price per Night (₺)'])))
             except Exception as e:
-                error = f"⚠️ Error: {str(e)}"
+                logging.error(f"Error during hotel comparison: {e}", exc_info=True)
+                error = "⚠️ An unexpected error occurred. Please try again."
 
-    return render_template(
-        'index.html',
-        results=results,
-        best=best,
-        check_in=check_in,
-        check_out=check_out,
-        location=location,
-        hotels=hotels,
-        error=error
-    )
+    return render_template('index.html', **locals())
 
 @app.route('/download')
 def download():
     try:
         return send_file('latest_results.csv', as_attachment=True, download_name='hotel_comparison.csv')
-    except Exception:
-        return "No results available yet. Run a comparison first.", 404
+    except FileNotFoundError:
+        return "No results available to download. Please run a comparison first.", 404
 
 if __name__ == '__main__':
     import socket
     hostname = socket.gethostname()
     try:
         local_ip = socket.gethostbyname(hostname)
-    except:
-        local_ip = "YOUR_IP"
+    except socket.gaierror:
+        local_ip = "127.0.0.1"
 
+    logging.info("Starting Flexible Hotel Comparison App")
     print("\n" + "="*60)
     print("🏨 FLEXIBLE HOTEL COMPARISON APP")
     print("="*60)
-    print(f"✅ Server starting...")
-    print(f"\n📱 ACCESS FROM THIS COMPUTER:")
-    print(f"   http://localhost:5000")
-    print(f"\n📱 ACCESS FROM YOUR PHONE (same WiFi):")
-    print(f"   http://{local_ip}:5000")
-    print(f"\n⚠️  Make sure your phone and computer are on the same WiFi!")
-    print("="*60 + "\n")
+    print("✅ Server starting...")
+    print("\n➡️  Access from this computer: http://localhost:5000")
+    print(f"➡️  Access from your phone (on the same WiFi): http://{local_ip}:5000")
+    print("\n" + "="*60 + "\n")
 
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
