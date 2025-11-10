@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Balıkesir Hotel Comparison</title>
+    <title>{{ location.title() if location else 'Hotel' }} Comparison</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -129,8 +129,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏨 Balıkesir Hotel Comparison</h1>
-            <p>Compare prices for 4 hotels instantly</p>
+            <h1>🏨 {{ location.title() if location else 'Hotel' }} Comparison</h1>
+            <p>Instantly compare hotel prices in your city of choice.</p>
         </div>
         <div class="content">
             {% if error %}
@@ -144,6 +144,28 @@
                 <div class="form-group">
                     <label for="check_out">Check-out Date</label>
                     <input type="date" id="check_out" name="check_out" value="{{ check_out or '' }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="location">Location (e.g., "New York")</label>
+                    <input type="text" id="location" name="location" value="{{ location or '' }}" required>
+                </div>
+                <div class="hotel-inputs">
+                    <div class="form-group">
+                        <label for="hotel1">Hotel 1</label>
+                        <input type="text" id="hotel1" name="hotel1" value="{{ hotels[0] or '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="hotel2">Hotel 2</label>
+                        <input type="text" id="hotel2" name="hotel2" value="{{ hotels[1] or '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="hotel3">Hotel 3</label>
+                        <input type="text" id="hotel3" name="hotel3" value="{{ hotels[2] or '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label for="hotel4">Hotel 4</label>
+                        <input type="text" id="hotel4" name="hotel4" value="{{ hotels[3] or '' }}">
+                    </div>
                 </div>
                 <button type="submit" class="btn">🔍 Compare Prices</button>
             </form>

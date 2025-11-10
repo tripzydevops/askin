@@ -79,7 +79,7 @@ def compare_hotels(hotels, check_in, check_out, location):
 
         serpapi_params = {
             "engine": "google_hotels",
-            "q": f"{hotel_name} {location}",
+            "q": f"{hotel_name} in {location}",
             "check_in_date": check_in,
             "check_out_date": check_out,
             "adults": "2",
