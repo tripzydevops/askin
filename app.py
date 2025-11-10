@@ -23,7 +23,9 @@ import pandas as pd
 app = Flask(__name__)
 
 # ✅ YOUR API KEY (already configured)
-SERPAPI_KEY = "371284cfbed0fcf087c826f04e982c76a27488a37b018f795d59f3ade87a6d20"
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
+if not SERPAPI_KEY:
+    raise ValueError("SERPAPI_KEY environment variable not set! Please get your key from https://serpapi.com/manage-api-key and set it as an environment variable.")
 
 SERPAPI_URL = "https://serpapi.com/search"
 
