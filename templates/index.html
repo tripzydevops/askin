@@ -145,6 +145,26 @@
                     <label for="check_out">Check-out Date</label>
                     <input type="date" id="check_out" name="check_out" value="{{ check_out or '' }}" required>
                 </div>
+                <div class="form-group">
+                    <label for="location">Location (e.g., "downtown")</label>
+                    <input type="text" id="location" name="location" value="{{ location or 'Balıkesir' }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="hotel1">Hotel 1</label>
+                    <input type="text" id="hotel1" name="hotel1" value="{{ hotels[0] if hotels|length > 0 else '' }}" placeholder="e.g., Hilton">
+                </div>
+                <div class="form-group">
+                    <label for="hotel2">Hotel 2</label>
+                    <input type="text" id="hotel2" name="hotel2" value="{{ hotels[1] if hotels|length > 1 else '' }}" placeholder="e.g., Marriott">
+                </div>
+                <div class="form-group">
+                    <label for="hotel3">Hotel 3</label>
+                    <input type="text" id="hotel3" name="hotel3" value="{{ hotels[2] if hotels|length > 2 else '' }}" placeholder="e.g., Hyatt">
+                </div>
+                <div class="form-group">
+                    <label for="hotel4">Hotel 4</label>
+                    <input type="text" id="hotel4" name="hotel4" value="{{ hotels[3] if hotels|length > 3 else '' }}" placeholder="e.g., Four Seasons">
+                </div>
                 <button type="submit" class="btn">🔍 Compare Prices</button>
             </form>
             {% if results %}
